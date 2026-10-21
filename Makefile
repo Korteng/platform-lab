@@ -33,3 +33,31 @@ sizes:       ## размеры образов проекта
 
 clean:       ## остановить и удалить тома (данные пропадут)
 	$(COMPOSE) down -v
+
+# ---------- Kubernetes (kind) ----------
+NS ?= finance-manager
+IMAGES = discovery-server finance-manager-app api-gateway frontend
+
+.PHONY: k-up k-load k-secrets k-infra k-deploy k-status k-down
+
+k-up:        ## создать kind-кластер (один нод)
+	kind create cluster --config k8s/kind-config.yaml
+
+k-load:      ## загрузить образы из Docker в kind (сначала make build)
+	for i in $(IMAGES); do kind load docker-image platform-lab/$$i:dev --name platform-lab || exit 1; done
+
+k-secrets: env  ## namespace и Secret fm-secrets из .env
+	kubectl create namespace $(NS) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl -n $(NS) create secret generic fm-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+
+k-infra: k-secrets  ## PostgreSQL, Redis, RabbitMQ, Kafka
+	helm upgrade --install infra charts/infra -n $(NS)
+
+k-deploy:    ## сервисы Finance Manager
+	helm upgrade --install fm charts/finance-manager -n $(NS)
+
+k-status:    ## поды, сервисы, тома
+	kubectl -n $(NS) get pods,svc,pvc
+
+k-down:      ## удалить кластер целиком
+	kind delete cluster --name platform-lab

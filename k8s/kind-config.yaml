@@ -1,0 +1,14 @@
+# Один нод (control-plane, на нём же крутятся поды): под 8 ГБ ОЗУ.
+# NodePort-ы пробрасываются на хост: браузер ходит на localhost:3001 (frontend) и localhost:8090 (gateway).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: platform-lab
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30090   # api-gateway
+        hostPort: 8090
+        protocol: TCP
+      - containerPort: 30001   # frontend
+        hostPort: 3001
+        protocol: TCP

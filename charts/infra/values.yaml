@@ -1,0 +1,31 @@
+# Секреты (fm-secrets) создаёт `make k-secrets` из .env, в чарте их нет.
+secretName: fm-secrets
+
+postgres:
+  image: postgres:15
+  storage: 1Gi
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+redis:
+  image: redis:7-alpine
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 64Mi}
+
+rabbitmq:
+  image: rabbitmq:3.13-management-alpine
+  storage: 1Gi
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {memory: 384Mi}
+
+kafka:
+  image: confluentinc/cp-kafka:7.6.0
+  storage: 1Gi
+  heap: "-Xms384m -Xmx384m"
+  clusterId: MkU3OEVBNTcwNTJENDM2Qk
+  resources:
+    requests: {cpu: 150m, memory: 512Mi}
+    limits: {memory: 768Mi}

@@ -1,0 +1,71 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+    app.kubernetes.io/part-of: finance-manager
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        app.kubernetes.io/part-of: finance-manager
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.registry }}/{{ $svc.image }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            {{- range $svc.ports }}
+            - {name: {{ .name }}, containerPort: {{ .port }}}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: fm-config
+          {{- if or $svc.secretEnv $svc.env }}
+          env:
+            {{- range $envName, $secretKey := $svc.secretEnv }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- range $envName, $envValue := $svc.env }}
+            - name: {{ $envName }}
+              value: {{ $envValue | quote }}
+            {{- end }}
+          {{- end }}
+          {{- $probes := index $.Values.probes $svc.probeType }}
+          {{- toYaml $probes | nindent 10 }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+spec:
+  type: {{ default "ClusterIP" (dig "service" "type" "" $svc) }}
+  selector:
+    app: {{ $name }}
+  ports:
+    {{- range $svc.ports }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .name }}
+      {{- if and (eq .name "http") (dig "service" "nodePort" 0 $svc) }}
+      nodePort: {{ dig "service" "nodePort" 0 $svc }}
+      {{- end }}
+    {{- end }}
+{{- end }}

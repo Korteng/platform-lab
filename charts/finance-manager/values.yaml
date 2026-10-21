@@ -1,0 +1,112 @@
+# Секреты (fm-secrets) создаёт `make k-secrets` из .env, в чарте их нет.
+secretName: fm-secrets
+
+image:
+  registry: platform-lab
+  tag: dev
+  pullPolicy: IfNotPresent   # образы загружаются в kind командой `kind load docker-image`
+
+# Общий ConfigMap (envFrom для всех сервисов). Хосты совпадают с именами Service из чарта infra.
+config:
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://discovery-server:8761/eureka/"
+  # в k8s hostname пода не резолвится из других подов, поэтому Eureka должна регистрировать IP
+  EUREKA_INSTANCE_PREFERIPADDRESS: "true"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  SPRING_RABBITMQ_HOST: "rabbitmq"
+  SPRING_RABBITMQ_PORT: "5672"
+  # браузер ходит на gateway через NodePort/kind на localhost
+  FRONTEND_ORIGIN: "http://localhost:3001"
+
+probes:
+  spring:
+    startupProbe:
+      httpGet: {path: /actuator/health/liveness, port: http}
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 40      # до ~400 с на старт (на слабом железе JVM стартует долго)
+    livenessProbe:
+      httpGet: {path: /actuator/health/liveness, port: http}
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readinessProbe:
+      httpGet: {path: /actuator/health/readiness, port: http}
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 6
+  http:
+    startupProbe:
+      httpGet: {path: /, port: http}
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 20
+    livenessProbe:
+      httpGet: {path: /, port: http}
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet: {path: /, port: http}
+      periodSeconds: 10
+      timeoutSeconds: 5
+
+services:
+  discovery-server:
+    image: discovery-server
+    replicas: 1
+    probeType: spring
+    ports:
+      - {name: http, port: 8761}
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {memory: 384Mi}
+
+  finance-manager-app:
+    image: finance-manager-app
+    replicas: 1
+    probeType: spring
+    ports:
+      - {name: http, port: 8080}
+      - {name: grpc, port: 9091}
+    # имя переменной в контейнере: ключ в Secret
+    secretEnv:
+      FINANCE_DB_NAME: FINANCE_DB_NAME
+      SPRING_DATASOURCE_USERNAME: FINANCE_DB_USER
+      SPRING_DATASOURCE_PASSWORD: FINANCE_DB_PASSWORD
+      APP_JWT_SECRET: APP_JWT_SECRET
+      RABBITMQ_USER: RABBITMQ_USER
+      RABBITMQ_PASSWORD: RABBITMQ_PASSWORD
+    # обычные переменные (выводятся ПОСЛЕ secretEnv, поэтому $(FINANCE_DB_NAME) подставляется)
+    env:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/$(FINANCE_DB_NAME)"
+    resources:
+      requests: {cpu: 200m, memory: 384Mi}
+      limits: {memory: 640Mi}
+
+  api-gateway:
+    image: api-gateway
+    replicas: 1
+    probeType: spring
+    ports:
+      - {name: http, port: 8090}
+    service:
+      type: NodePort
+      nodePort: 30090
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {memory: 384Mi}
+
+  frontend:
+    image: frontend
+    replicas: 1
+    probeType: http
+    ports:
+      - {name: http, port: 8080}
+    service:
+      type: NodePort
+      nodePort: 30001
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 64Mi}
