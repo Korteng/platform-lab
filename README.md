@@ -9,7 +9,7 @@
 | Этап | Содержание | Статус |
 |---|---|---|
 | W1 | Docker: общий Dockerfile, healthcheck, лимиты, compose с профилями | готово |
-| W2 | kind + Helm-чарт, HPA, Ingress | план |
+| W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
 | W3 | GitLab CI + GitHub Actions | план |
 | W4 | Ansible: подготовка хоста | план |
 | W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | план |
@@ -76,7 +76,7 @@ make down
 - (закрыто в W2) В `discovery-server` и `api-gateway` добавлен `spring-boot-starter-actuator`, healthcheck теперь штатный `/actuator/health`, включены liveness/readiness-пробы.
 - Образы тяжёлые (500-700 МБ на Java-сервис): кандидаты на оптимизацию, слоёный jar (`layertools`), JRE alpine/jlink. Исходные образы до рефакторинга не замерялись, сравнения «до/после» нет.
 - `fm-app` использует 76% лимита 512 МиБ: при росте нагрузки лимит поднять.
-- Секреты в `.env`, в K8s будут через Secret (W2).
+- Секреты в `.env`, в K8s они создаются командой `make k-secrets` как Secret `fm-secrets` (W2, сделано).
 
 ## W2: Kubernetes (kind + Helm)
 
