@@ -54,10 +54,14 @@ k-infra: k-secrets  ## PostgreSQL, Redis, RabbitMQ, Kafka
 	helm upgrade --install infra charts/infra -n $(NS)
 
 k-deploy:    ## сервисы Finance Manager
-	helm upgrade --install fm charts/finance-manager -n $(NS)
+	helm upgrade --install fm charts/finance-manager -n $(NS) --atomic --timeout 5m
 
 k-status:    ## поды, сервисы, тома
 	kubectl -n $(NS) get pods,svc,pvc
 
 k-down:      ## удалить кластер целиком
 	kind delete cluster --name platform-lab
+
+k-metrics: ## metrics-server для kind
+	helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update
+	helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --set "args={--kubelet-insecure-tls}"
