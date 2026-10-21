@@ -73,7 +73,7 @@ make down
 
 ## Известные ограничения (задел на следующие этапы)
 
-- В `discovery-server` и `api-gateway` нет actuator: healthcheck сделан через дашборд Eureka и TCP-порт. Добавить `spring-boot-starter-actuator` в оба модуля, чтобы пробы K8s были полноценными (W2).
+- (закрыто в W2) В `discovery-server` и `api-gateway` добавлен `spring-boot-starter-actuator`, healthcheck теперь штатный `/actuator/health`, включены liveness/readiness-пробы.
 - Образы тяжёлые (500-700 МБ на Java-сервис): кандидаты на оптимизацию, слоёный jar (`layertools`), JRE alpine/jlink. Исходные образы до рефакторинга не замерялись, сравнения «до/после» нет.
 - `fm-app` использует 76% лимита 512 МиБ: при росте нагрузки лимит поднять.
 - Секреты в `.env`, в K8s будут через Secret (W2).
