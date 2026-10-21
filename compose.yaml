@@ -1,0 +1,299 @@
+# platform-lab: окружение Finance Manager с профилями под слабое железо.
+#   make up                      ядро (БД, Kafka, RabbitMQ, Redis, Eureka, app, gateway, frontend)
+#   make up PROFILES="notifications bpm observability"   по необходимости
+# Исходники приложения берутся из соседней папки (FM_PATH, по умолчанию ../finance-manager).
+
+x-java-build: &java-build
+  context: ${FM_PATH:-../finance-manager}
+  dockerfile: ${PWD}/docker/java-service.Dockerfile
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-tcp-health: &tcp-health
+  interval: 15s
+  timeout: 10s
+  start_period: 120s
+  retries: 8
+
+services:
+
+  # ---------- Данные и брокеры ----------
+  postgres:
+    <<: *restart
+    image: postgres:15
+    container_name: fm-postgres
+    mem_limit: 256m
+    environment:
+      POSTGRES_USER: ${FINANCE_DB_USER}
+      POSTGRES_PASSWORD: ${FINANCE_DB_PASSWORD}
+      POSTGRES_DB: ${FINANCE_DB_NAME}
+    ports: ["15432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FINANCE_DB_USER} -d ${FINANCE_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    container_name: fm-redis
+    mem_limit: 64m
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    <<: *restart
+    image: rabbitmq:3.13-management-alpine
+    container_name: fm-rabbitmq
+    mem_limit: 384m
+    ports: ["5672:5672", "15672:15672"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 90s
+
+  kafka:
+    <<: *restart
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: fm-kafka
+    mem_limit: 768m
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms384m -Xmx384m"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes: [kafka_data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:9092"]
+      interval: 15s
+      timeout: 15s
+      retries: 15
+      start_period: 90s
+
+  # ---------- Ядро приложения ----------
+  discovery-server:
+    <<: *restart
+    build:
+      <<: *java-build
+      args: {MODULE: discovery-server, PORT: "8761"}
+    image: platform-lab/discovery-server:dev
+    container_name: fm-discovery
+    mem_limit: 384m
+    ports: ["8761:8761"]
+    # в модуле нет actuator, проверяем дашборд Eureka
+    healthcheck:
+      <<: *tcp-health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8761/ >/dev/null || exit 1"]
+
+  app:
+    <<: *restart
+    build:
+      <<: *java-build
+      args: {MODULE: finance-manager-app, PORT: "8080"}
+    image: platform-lab/finance-manager-app:dev
+    container_name: fm-app
+    mem_limit: 512m
+    ports: ["8080:8080", "9091:9091"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${FINANCE_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${FINANCE_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${FINANCE_DB_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      APP_JWT_SECRET: ${APP_JWT_SECRET}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    depends_on:
+      postgres: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      discovery-server: {condition: service_healthy}
+
+  api-gateway:
+    <<: *restart
+    build:
+      <<: *java-build
+      args: {MODULE: api-gateway, PORT: "8090"}
+    image: platform-lab/api-gateway:dev
+    container_name: fm-gateway
+    mem_limit: 384m
+    ports: ["8090:8090"]
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      FRONTEND_ORIGIN: http://localhost:3001
+    depends_on:
+      discovery-server: {condition: service_healthy}
+      app: {condition: service_healthy}
+    # в модуле нет actuator, проверяем TCP-порт
+    healthcheck:
+      <<: *tcp-health
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8090' || exit 1"]
+
+  frontend:
+    <<: *restart
+    build:
+      context: ${FM_PATH:-../finance-manager}
+      dockerfile: ${PWD}/docker/frontend.Dockerfile
+      additional_contexts:
+        nginxconf: ./docker/nginx
+      args:
+        VITE_API_BASE_URL: http://localhost:8090
+    image: platform-lab/frontend:dev
+    container_name: fm-frontend
+    mem_limit: 64m
+    ports: ["3001:8080"]
+    depends_on:
+      api-gateway: {condition: service_healthy}
+
+  # ---------- Профиль notifications ----------
+  notification-db:
+    <<: *restart
+    profiles: [notifications]
+    image: postgres:15
+    container_name: fm-notification-postgres
+    mem_limit: 256m
+    environment:
+      POSTGRES_USER: ${NOTIFICATION_DB_USER}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME}
+    ports: ["5433:5432"]
+    volumes: [notification_postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOTIFICATION_DB_USER} -d ${NOTIFICATION_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  notification-service:
+    <<: *restart
+    profiles: [notifications]
+    build:
+      <<: *java-build
+      args: {MODULE: notification-service, PORT: "8081"}
+    image: platform-lab/notification-service:dev
+    container_name: fm-notification
+    mem_limit: 384m
+    ports: ["8081:8081"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://notification-db:5432/${NOTIFICATION_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${NOTIFICATION_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    depends_on:
+      notification-db: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      discovery-server: {condition: service_healthy}
+
+  # ---------- Профиль bpm ----------
+  camunda-db:
+    <<: *restart
+    profiles: [bpm]
+    image: postgres:15
+    container_name: fm-camunda-postgres
+    mem_limit: 256m
+    environment:
+      POSTGRES_USER: ${CAMUNDA_DB_USER}
+      POSTGRES_PASSWORD: ${CAMUNDA_DB_PASSWORD}
+      POSTGRES_DB: ${CAMUNDA_DB_NAME}
+    ports: ["5434:5432"]
+    volumes: [camunda_postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CAMUNDA_DB_USER} -d ${CAMUNDA_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  camunda-service:
+    <<: *restart
+    profiles: [bpm]
+    build:
+      <<: *java-build
+      args: {MODULE: camunda-service, PORT: "8082"}
+    image: platform-lab/camunda-service:dev
+    container_name: fm-camunda
+    mem_limit: 768m
+    ports: ["8082:8082"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://camunda-db:5432/${CAMUNDA_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${CAMUNDA_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${CAMUNDA_DB_PASSWORD}
+      CAMUNDA_ADMIN_PASSWORD: ${CAMUNDA_ADMIN_PASSWORD}
+    depends_on:
+      camunda-db: {condition: service_healthy}
+
+  # ---------- Профиль observability ----------
+  observer:
+    <<: *restart
+    profiles: [observability]
+    build:
+      context: ${FM_PATH:-../finance-manager}/python-observer
+    image: platform-lab/python-observer:dev
+    container_name: fm-observer
+    mem_limit: 128m
+    ports: ["9100:9100"]
+    environment:
+      TARGETS: "finance-manager-app=app:8080:/actuator/health"
+      POLL_INTERVAL_SECONDS: "5"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      app: {condition: service_healthy}
+
+  prometheus:
+    <<: *restart
+    profiles: [observability]
+    image: prom/prometheus:v2.53.0
+    container_name: fm-prometheus
+    mem_limit: 256m
+    ports: ["9090:9090"]
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    <<: *restart
+    profiles: [observability]
+    image: grafana/grafana:11.1.0
+    container_name: fm-grafana
+    mem_limit: 256m
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes: [grafana_data:/var/lib/grafana]
+    depends_on: [prometheus]
+
+volumes:
+  postgres_data:
+  notification_postgres_data:
+  camunda_postgres_data:
+  kafka_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
