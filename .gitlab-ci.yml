@@ -48,5 +48,5 @@ deploy-kind:
         docker tag platform-lab/$i:dev platform-lab/$i:$CI_COMMIT_SHORT_SHA
         docker save platform-lab/$i:$CI_COMMIT_SHORT_SHA | docker exec -i platform-lab-control-plane ctr --namespace=k8s.io images import --all-platforms --digests --snapshotter=overlayfs -
       done
-    - helm upgrade --install fm charts/finance-manager -n finance-manager --set image.tag=$CI_COMMIT_SHORT_SHA --atomic --timeout 5m
+    - helm upgrade --install fm charts/finance-manager -n finance-manager --set image.tag=$CI_COMMIT_SHORT_SHA --atomic --timeout 10m
     - kubectl -n finance-manager get pods

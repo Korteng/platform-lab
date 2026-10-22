@@ -54,7 +54,7 @@ k-infra: k-secrets  ## PostgreSQL, Redis, RabbitMQ, Kafka
 	helm upgrade --install infra charts/infra -n $(NS)
 
 k-deploy:    ## сервисы Finance Manager
-	helm upgrade --install fm charts/finance-manager -n $(NS) --atomic --timeout 5m
+	helm upgrade --install fm charts/finance-manager -n $(NS) --atomic --timeout 10m
 
 k-status:    ## поды, сервисы, тома
 	kubectl -n $(NS) get pods,svc,pvc
