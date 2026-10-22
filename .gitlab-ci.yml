@@ -40,7 +40,7 @@ deploy-kind:
   image: docker:cli
   script:
     - apk add --no-cache kubectl helm
-    - docker network connect kind "$(hostname)"
+    - CID=$(grep -m1 -o '/containers/[0-9a-f]\{64\}' /proc/self/mountinfo | cut -d/ -f3); docker network connect kind "$CID"
     - docker exec platform-lab-control-plane cat /etc/kubernetes/admin.conf > /tmp/kubeconfig
     - export KUBECONFIG=/tmp/kubeconfig
     - |
