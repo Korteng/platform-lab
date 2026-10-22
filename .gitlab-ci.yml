@@ -1,0 +1,17 @@
+stages:
+  - lint
+
+helm-lint:
+  stage: lint
+  image:
+    name: alpine/helm:latest
+    entrypoint: [""]
+  script:
+    - helm lint charts/infra
+    - helm lint charts/finance-manager
+
+hadolint:
+  stage: lint
+  image: hadolint/hadolint:latest-debian
+  script:
+    - hadolint --failure-threshold error docker/*.Dockerfile
