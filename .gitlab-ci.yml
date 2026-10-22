@@ -1,6 +1,7 @@
 stages:
   - lint
   - build
+  - deploy
 
 helm-lint:
   stage: lint
@@ -21,8 +22,6 @@ build-images:
   stage: build
   when: manual
   allow_failure: true
-  when: manual
-  allow_failure: true
   image: docker:cli
   variables:
     DOCKER_BUILDKIT: "1"
@@ -33,3 +32,20 @@ build-images:
     - make env
     - make build
     - docker images | grep platform-lab
+
+deploy-kind:
+  stage: deploy
+  when: manual
+  image: docker:cli
+  script:
+    - apk add --no-cache kubectl helm
+    - docker network connect kind "$(hostname)"
+    - docker exec platform-lab-control-plane cat /etc/kubernetes/admin.conf > /tmp/kubeconfig
+    - export KUBECONFIG=/tmp/kubeconfig
+    - |
+      for i in discovery-server finance-manager-app api-gateway frontend; do
+        docker tag platform-lab/$i:dev platform-lab/$i:$CI_COMMIT_SHORT_SHA
+        docker save platform-lab/$i:$CI_COMMIT_SHORT_SHA | docker exec -i platform-lab-control-plane ctr --namespace=k8s.io images import --all-platforms --digests --snapshotter=overlayfs -
+      done
+    - helm upgrade --install fm charts/finance-manager -n finance-manager --set image.tag=$CI_COMMIT_SHORT_SHA --atomic --timeout 5m
+    - kubectl -n finance-manager get pods
