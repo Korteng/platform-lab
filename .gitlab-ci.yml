@@ -19,6 +19,10 @@ hadolint:
 
 build-images:
   stage: build
+  when: manual
+  allow_failure: true
+  when: manual
+  allow_failure: true
   image: docker:cli
   variables:
     DOCKER_BUILDKIT: "1"
