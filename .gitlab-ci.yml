@@ -1,5 +1,6 @@
 stages:
   - lint
+  - build
 
 helm-lint:
   stage: lint
@@ -15,3 +16,16 @@ hadolint:
   image: hadolint/hadolint:latest-debian
   script:
     - hadolint --failure-threshold error docker/*.Dockerfile
+
+build-images:
+  stage: build
+  image: docker:cli
+  variables:
+    DOCKER_BUILDKIT: "1"
+  before_script:
+    - apk add --no-cache git make
+    - git clone --depth 1 https://github.com/Korteng/finance-manager.git ../finance-manager
+  script:
+    - make env
+    - make build
+    - docker images | grep platform-lab
