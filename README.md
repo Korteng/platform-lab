@@ -10,7 +10,7 @@
 |---|---|---|
 | W1 | Docker: общий Dockerfile, healthcheck, лимиты, compose с профилями | готово |
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
-| W3 | GitLab CI + GitHub Actions | план |
+| W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
 | W4 | Ansible: подготовка хоста | план |
 | W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | план |
 | W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
@@ -105,3 +105,30 @@ make down
 - ingress-nginx выведен из эксплуатации в марте 2026, поэтому выбран Traefik. Сервис Traefik типа `ClusterIP`, на хосте порты 80/443 в kind не проброшены, доступ через `kubectl port-forward svc/traefik 8080:80`.
 - Фронт обращается к gateway напрямую (NodePort 30090), а не через `/api` Ingress.
 - Первая попытка на ноуте (2 ядра, ~6 ГБ) давала шторм рестартов: дефолтные пробы с `timeoutSeconds: 1` убивали поды под нагрузкой CPU. Таймауты пробов увеличены, лаборатория перенесена на десктоп (3 ядра, 8 ГБ): 0 рестартов.
+
+## W3: CI/CD (GitLab CI, свой runner)
+
+Пайплайн `.gitlab-ci.yml`, runner в Docker (`gitlab/gitlab-runner`, executor `docker`) на рабочей машине, Docker хоста монтируется через `docker.sock`.
+
+| Стадия | Job | Что делает |
+|---|---|---|
+| lint | `helm-lint` | `helm lint` чартов `infra` и `finance-manager` |
+| lint | `hadolint` | проверка Dockerfile (порог `error`) |
+| build | `build-images` (вручную) | `make build`: клонирует `finance-manager`, собирает 4 образа, кэш Maven в BuildKit cache mount |
+| deploy | `deploy-kind` (вручную) | тегирует образы коммитом, загружает в ноду kind, `helm upgrade --atomic --timeout 10m` |
+
+### Как устроен деплой
+- Job подключается к сети `kind`, берёт `admin.conf` из ноды, образы импортируются в containerd ноды (как `kind load`), релиз обновляется с `image.tag=<короткий SHA коммита>`.
+- Секреты в пайплайне не создаются: `make k-secrets` в CI перезаписал бы реальные пароли плейсхолдерами из `.env.example`. `fm-secrets` создаётся один раз вручную.
+
+### Что сломалось по дороге
+- Первые job'ы ушли на общие runner GitLab (нет доступа к Docker хоста: `tcp://docker:2375`). Исправление: отключены instance runners для проекта.
+- Повторный `git clone` в `build-images` падал: рабочая папка runner сохраняется между запусками. Исправление: `rm -rf ../finance-manager` перед клоном.
+- `docker network connect kind "$(hostname)"` не находил контейнер (hostname не равен имени контейнера). Исправление: ID контейнера из `/proc/self/mountinfo`.
+- Деплой падал по таймауту и откатывался (ревизии 8-9 `failed`): rolling update поднимал новые JVM рядом со старыми, память WSL (4 ГБ) уходила в swap, API-сервер кластера отвечал `TLS handshake timeout`. Исправление: `maxSurge: 0, maxUnavailable: 1`, WSL 5 ГБ, `--timeout 10m`. `--atomic` откатил релиз без ручных действий.
+
+### Ограничения
+- Runner с `docker.sock` получает полный контроль над Docker хоста: подходит только для личной лаборатории и собственного кода.
+- Сборка и деплой запускаются вручную (кнопка в GitLab), кластер должен быть запущен.
+- `maxUnavailable: 1` допускает короткий простой при обновлении (одна реплика на сервис).
+- Предупреждения hadolint (DL3025, DL3022, DL3066) не чинились, порог пайплайна `error`.
