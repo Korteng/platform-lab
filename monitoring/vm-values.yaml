@@ -1,0 +1,52 @@
+server:
+  retentionPeriod: "7d"
+  persistentVolume:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  scrape:
+    enabled: true
+    config:
+      global:
+        scrape_interval: 30s
+      scrape_configs:
+        - job_name: victoriametrics
+          static_configs:
+            - targets: ["localhost:8428"]
+
+        - job_name: finance-manager-app
+          metrics_path: /actuator/prometheus
+          kubernetes_sd_configs:
+            - role: pod
+              namespaces:
+                names: [finance-manager]
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              regex: finance-manager-app
+              action: keep
+            - source_labels: [__meta_kubernetes_pod_ip]
+              target_label: __address__
+              replacement: "$1:8080"
+            - source_labels: [__meta_kubernetes_pod_name]
+              target_label: pod
+
+        - job_name: cadvisor
+          scheme: https
+          tls_config:
+            ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          kubernetes_sd_configs:
+            - role: node
+          relabel_configs:
+            - target_label: __address__
+              replacement: kubernetes.default.svc:443
+            - source_labels: [__meta_kubernetes_node_name]
+              regex: (.+)
+              target_label: __metrics_path__
+              replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
