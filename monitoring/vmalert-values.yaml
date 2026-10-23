@@ -1,0 +1,59 @@
+server:
+  datasource:
+    url: http://vm-victoria-metrics-single-server.monitoring.svc.cluster.local:8428
+  notifier:
+    url: http://vmalert-victoria-metrics-alert-alertmanager.monitoring.svc.cluster.local:9093
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 96Mi
+  config:
+    alerts:
+      groups:
+        - name: finance-manager
+          rules:
+            - alert: AppDown
+              expr: absent(up{job="finance-manager-app"} == 1)
+              for: 1m
+              labels:
+                severity: critical
+              annotations:
+                summary: "finance-manager-app does not respond to scrapes"
+                runbook: "docs/runbooks.md#appdown"
+            - alert: PodRestarted
+              expr: sum by (pod) (changes(container_start_time_seconds{namespace="finance-manager",container!="",container!="POD"}[10m])) > 0
+              labels:
+                severity: warning
+              annotations:
+                summary: "A container in finance-manager restarted in the last 10 minutes"
+                runbook: "docs/runbooks.md#podrestarted"
+            - alert: High5xxRate
+              expr: sum(rate(http_server_requests_seconds_count{application="finance-manager-app",status=~"5.."}[2m])) / sum(rate(http_server_requests_seconds_count{application="finance-manager-app"}[2m])) > 0.05
+              for: 1m
+              labels:
+                severity: critical
+              annotations:
+                summary: "More than 5 percent of finance-manager-app responses are 5xx"
+                runbook: "docs/runbooks.md#high5xxrate"
+            - alert: HighMemory
+              expr: container_memory_working_set_bytes{namespace="finance-manager",container!="",container!="POD"} / on(namespace,pod,container) (container_spec_memory_limit_bytes{namespace="finance-manager",container!="",container!="POD"} > 0) > 0.9
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Container memory above 90 percent of its limit"
+                runbook: "docs/runbooks.md#highmemory"
+alertmanager:
+  enabled: true
+  persistentVolume:
+    enabled: false
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi

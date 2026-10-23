@@ -12,7 +12,7 @@
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
 | W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
 | W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
-| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | план |
+| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово (без логов) |
 | W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
 
 ## Быстрый старт
@@ -162,3 +162,39 @@ make down
 ### Ограничения
 - Цель это контейнер, а не сам WSL-хост, systemd и демон Docker в нём не настраиваются.
 - Ключ без пароля, `host_key_checking = False`: только для лаборатории.
+
+## W5: Observability
+
+Метрики, дашборд и алерты для приложения в kind. Всё описано кодом в `monitoring/`, чарты запинены.
+
+| Компонент | Версия чарта | Назначение |
+|---|---|---|
+| VictoriaMetrics single | vm/victoria-metrics-single 0.49.0 | хранение метрик, scrape (retention 7d, PV 2Gi) |
+| Grafana | grafana/grafana 10.5.15 | дашборд, datasource и дашборд провижинятся из ConfigMap |
+| vmalert + Alertmanager | vm/victoria-metrics-alert 0.51.0 | правила, получатель `devnull` |
+
+Источники метрик: сама VictoriaMetrics, `finance-manager-app` (`/actuator/prometheus`), cAdvisor через API server (ClusterRole в `monitoring/rbac-cadvisor.yaml`). Интервал scrape 30s, окно rate 2m.
+
+### Алерты
+
+Описаны в `monitoring/vmalert-values.yaml`, разбор в [docs/runbooks.md](docs/runbooks.md): `AppDown`, `PodRestarted`, `High5xxRate`, `HighMemory`.
+
+### Результат
+
+- Все 3 target в состоянии `up`, дашборд на 7 панелей собирается из `monitoring/dashboards/finance-manager.json`.
+- Тест сбоя: `postgres` масштабирован в 0, запросы к `/actuator/health` дали 503, `High5xxRate` перешёл в `firing`. После возврата реплики алерт гаснет.
+- Попутно `PodRestarted` сработал на пересозданный `postgres-0`: рестарт БД тоже виден.
+
+### Что нашлось по дороге
+
+- Readiness probe приложения не включает БД: при остановленном postgres под остаётся `Ready`, а `/actuator/health` отдаёт 503. Трафик продолжает идти на неработающий под. Исправление (probe с учётом БД) не сделано.
+- cAdvisor отвечал 403: не хватало прав на `nodes/proxy`, добавлены ClusterRole и Binding.
+- HPA после рестартов кратко поднимается до 2 реплик и возвращается к 1.
+
+### Ограничения
+
+- kube-state-metrics не установлен, рестарты оцениваются через `changes(container_start_time_seconds)` за 10m.
+- Алерта по lag Kafka нет: нужен экспортёр.
+- Логов нет (Loki/Vector не поднимались): не хватает памяти в WSL.
+- Alertmanager без реальных уведомлений, получатель `devnull`.
+- Доступ к UI через `kubectl port-forward`, ingress не настроен.
