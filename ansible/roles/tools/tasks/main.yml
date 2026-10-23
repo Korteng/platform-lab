@@ -1,0 +1,83 @@
+- name: Create tools directory
+  ansible.builtin.file:
+    path: "{{ tools_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download kubectl (checksum verified)
+  register: tools_dl
+  until: tools_dl is succeeded
+  retries: 3
+  delay: 5
+  ansible.builtin.get_url:
+    url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+    dest: "{{ tools_dir }}/kubectl-{{ kubectl_version }}"
+    checksum: "sha256:https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl.sha256"
+    mode: "0755"
+
+- name: Link kubectl
+  ansible.builtin.file:
+    src: "{{ tools_dir }}/kubectl-{{ kubectl_version }}"
+    dest: /usr/local/bin/kubectl
+    state: link
+
+- name: Download kind (checksum verified)
+  register: tools_dl
+  until: tools_dl is succeeded
+  retries: 3
+  delay: 5
+  ansible.builtin.get_url:
+    url: "https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-linux-amd64"
+    dest: "{{ tools_dir }}/kind-{{ kind_version }}"
+    checksum: "sha256:https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-linux-amd64.sha256sum"
+    mode: "0755"
+
+- name: Link kind
+  ansible.builtin.file:
+    src: "{{ tools_dir }}/kind-{{ kind_version }}"
+    dest: /usr/local/bin/kind
+    state: link
+
+- name: Download helm archive (checksum verified)
+  register: tools_dl
+  until: tools_dl is succeeded
+  retries: 3
+  delay: 5
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: "{{ tools_dir }}/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz.sha256sum"
+    mode: "0644"
+
+- name: Create helm version directory
+  ansible.builtin.file:
+    path: "{{ tools_dir }}/helm-{{ helm_version }}"
+    state: directory
+    mode: "0755"
+
+- name: Unpack helm
+  ansible.builtin.unarchive:
+    src: "{{ tools_dir }}/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: "{{ tools_dir }}/helm-{{ helm_version }}"
+    remote_src: true
+    creates: "{{ tools_dir }}/helm-{{ helm_version }}/linux-amd64/helm"
+
+- name: Link helm
+  ansible.builtin.file:
+    src: "{{ tools_dir }}/helm-{{ helm_version }}/linux-amd64/helm"
+    dest: /usr/local/bin/helm
+    state: link
+
+- name: Check installed versions
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - kubectl version --client
+    - helm version --short
+    - kind version
+  register: tools_versions
+  check_mode: false
+  changed_when: false
+
+- name: Show versions
+  ansible.builtin.debug:
+    msg: "{{ tools_versions.results | map(attribute='stdout_lines') | list }}"

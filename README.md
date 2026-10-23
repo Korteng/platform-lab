@@ -11,7 +11,7 @@
 | W1 | Docker: общий Dockerfile, healthcheck, лимиты, compose с профилями | готово |
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
 | W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
-| W4 | Ansible: подготовка хоста | план |
+| W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
 | W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | план |
 | W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
 
@@ -132,3 +132,33 @@ make down
 - Сборка и деплой запускаются вручную (кнопка в GitLab), кластер должен быть запущен.
 - `maxUnavailable: 1` допускает короткий простой при обновлении (одна реплика на сервис).
 - Предупреждения hadolint (DL3025, DL3022, DL3066) не чинились, порог пайплайна `error`.
+
+## W4: Ansible (подготовка хоста)
+
+Роли `base` и `tools` настраивают Linux-хост по SSH. Цель: контейнер `ansible-target` (Ubuntu 24.04 + sshd, лимит 256 МБ). Control node: WSL Ubuntu, ansible-core 2.20.1.
+
+| Команда | Что делает |
+|---|---|
+| `make a-build` | собирает образ цели |
+| `make a-target` | запускает контейнер-цель (порт 2222) |
+| `make a-ping` | проверка связи |
+| `make a-run` | применяет плейбук |
+| `make a-check` | режим проверки с diff |
+
+### Что делают роли
+- `base`: базовые пакеты, рабочий каталог `/opt/platform-lab`.
+- `tools`: kubectl v1.37.1, helm v3.22.1, kind v0.33.0 с версией в имени файла, симлинки в `/usr/local/bin`, проверка checksum с официальных источников, повторы при сетевых сбоях.
+
+### Результат
+- Первый прогон: `changed`, повторный: `changed=0`.
+- `--check --diff`: без изменений, версии инструментов видны.
+
+### Что сломалось по дороге
+- Скачивание kubectl упало (`Incomplete read`): добавлены `retries` и `until`.
+- `ansible.cfg` в `/mnt/c` игнорируется (права 777): конфиг подключается через `ANSIBLE_CONFIG` в Makefile.
+- Контейнер-цель остановился после перезапуска Docker: `make a-target` его поднимает.
+- В `--check` пропускалась проверка версий: добавлен `check_mode: false` для чтения.
+
+### Ограничения
+- Цель это контейнер, а не сам WSL-хост, systemd и демон Docker в нём не настраиваются.
+- Ключ без пароля, `host_key_checking = False`: только для лаборатории.

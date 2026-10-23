@@ -65,3 +65,24 @@ k-down:      ## удалить кластер целиком
 k-metrics: ## metrics-server для kind
 	helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update
 	helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --set "args={--kubelet-insecure-tls}"
+
+# W4 Ansible
+ANSIBLE_CONFIG := $(CURDIR)/ansible/ansible.cfg
+export ANSIBLE_CONFIG
+
+.PHONY: a-build a-target a-ping a-run a-check
+
+a-build:
+	docker build -f docker/ansible-target.Dockerfile -t platform-lab/ansible-target:dev docker/
+
+a-target:
+	docker start ansible-target || docker run -d --name ansible-target --memory 256m -p 2222:22 -e PUBKEY="$$(cat ~/.ssh/platform_lab_ansible.pub)" platform-lab/ansible-target:dev
+
+a-ping:
+	ansible lab -m ping
+
+a-run:
+	ansible-playbook ansible/site.yml
+
+a-check:
+	ansible-playbook ansible/site.yml --check --diff

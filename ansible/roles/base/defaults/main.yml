@@ -1,0 +1,9 @@
+base_packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - make
+  - unzip
+  - vim
+base_workdir: /opt/platform-lab

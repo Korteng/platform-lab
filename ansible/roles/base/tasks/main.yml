@@ -1,0 +1,14 @@
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create platform working directory
+  ansible.builtin.file:
+    path: "{{ base_workdir }}"
+    state: directory
+    owner: ansible
+    group: ansible
+    mode: "0755"

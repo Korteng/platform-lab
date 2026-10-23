@@ -1,0 +1,6 @@
+- name: Prepare lab host
+  hosts: lab
+  become: true
+  roles:
+    - base
+    - tools
