@@ -12,7 +12,7 @@
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
 | W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
 | W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
-| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово (без lag Kafka) |
+| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово |
 | W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
 
 ## Быстрый старт
@@ -130,6 +130,8 @@ make down
 - Loki падал с `mkdir /var/loki: read-only file system`: без PV чарт не монтирует каталог данных при read-only корне. Включён PV 2Gi, отключён sidecar правил.
 - Vector: Service с `spec.ports: Required value` (портов у агента нет) и `{{ }}` в labels воспринимались как шаблон Helm. Исправлено `service.enabled: false` и экранированием в `monitoring/vector-values.yaml`.
 
+- Kafka объявляет себя коротким именем `kafka`, из namespace `monitoring` оно не резолвится (`lookup kafka ... server misbehaving`), scrape экспортёра падал по таймауту. Экспортёр перенесён в `finance-manager`.
+
 ### Ограничения
 - Runner с `docker.sock` получает полный контроль над Docker хоста: подходит только для личной лаборатории и собственного кода.
 - Сборка и деплой запускаются вручную (кнопка в GitLab), кластер должен быть запущен.
@@ -177,6 +179,7 @@ make down
 | vmalert + Alertmanager | vm/victoria-metrics-alert 0.51.0 | правила, получатель `devnull` |
 | Loki | grafana/loki 7.5.0 | логи, SingleBinary, PV 2Gi, retention 48h |
 | Vector | vector/vector 0.60.0 | DaemonSet, читает логи подов `finance-manager`, шлёт в Loki |
+| Kafka exporter | prometheus-community/prometheus-kafka-exporter 4.1.0 | метрики lag consumer group, ставится в `finance-manager` |
 
 Источники метрик: сама VictoriaMetrics, `finance-manager-app` (`/actuator/prometheus`), cAdvisor через API server (ClusterRole в `monitoring/rbac-cadvisor.yaml`). Интервал scrape 30s, окно rate 2m.
 
@@ -186,13 +189,15 @@ Vector (DaemonSet, `kubernetes_logs`) собирает логи подов names
 
 ### Алерты
 
-Описаны в `monitoring/vmalert-values.yaml`, разбор в [docs/runbooks.md](docs/runbooks.md): `AppDown`, `PodRestarted`, `High5xxRate`, `HighMemory`.
+Описаны в `monitoring/vmalert-values.yaml`, разбор в [docs/runbooks.md](docs/runbooks.md): `AppDown`, `PodRestarted`, `High5xxRate`, `HighMemory`, `KafkaConsumerLag`.
 
 ### Результат
 
 - Все 3 target в состоянии `up`, дашборд на 7 панелей собирается из `monitoring/dashboards/finance-manager.json`.
 - Тест сбоя: `postgres` масштабирован в 0, запросы к `/actuator/health` дали 503, `High5xxRate` перешёл в `firing`. После возврата реплики алерт гаснет.
 - Попутно `PodRestarted` сработал на пересозданный `postgres-0`: рестарт БД тоже виден.
+
+- Тест `KafkaConsumerLag`: в приложении нет живого консюмера, поэтому проверено синтетически. Отдельный топик `lag-test`, группа `lag-test-group` прочитала 1 сообщение, затем в топик записано ещё 3 без консюмера, lag стал 3, алерт перешёл в `active`. После чтения хвоста алерт гаснет.
 
 ### Что нашлось по дороге
 
@@ -203,7 +208,7 @@ Vector (DaemonSet, `kubernetes_logs`) собирает логи подов names
 ### Ограничения
 
 - kube-state-metrics не установлен, рестарты оцениваются через `changes(container_start_time_seconds)` за 10m.
-- Алерта по lag Kafka нет: нужен экспортёр.
+- Алерт по lag проверен только синтетической группой, реального консюмера в деплое нет. Порог `> 0` для лаборатории.
 - Логи только namespace `finance-manager`, хранятся 48h, алертов по логам нет.
 - Alertmanager без реальных уведомлений, получатель `devnull`.
 - Доступ к UI через `kubectl port-forward`, ingress не настроен.

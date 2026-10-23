@@ -50,3 +50,6 @@ server:
               regex: (.+)
               target_label: __metrics_path__
               replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        - job_name: kafka-exporter
+          static_configs:
+            - targets: ["kafka-exporter-prometheus-kafka-exporter.finance-manager.svc:9308"]

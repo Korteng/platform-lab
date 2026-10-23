@@ -71,3 +71,20 @@
 - всплеск нагрузки, HPA ещё не добавил реплику
 
 Действия: временно поднять limits в values чарта, смотреть тренд на дашборде, при утечке снять heap dump.
+
+## KafkaConsumerLag
+
+Группа потребителей отстаёт от конца топика (`kafka_consumergroup_lag > 0` дольше 1m). Метрики отдаёт `kafka-exporter` в namespace `finance-manager`.
+
+Проверить:
+
+    kubectl -n finance-manager exec kafka-0 -- kafka-consumer-groups --bootstrap-server kafka:9092 --describe --group <group>
+    kubectl -n finance-manager get pods
+    kubectl -n finance-manager logs deploy/<consumer> --tail=100
+
+Частые причины:
+- консюмер остановлен или в CrashLoopBackOff (в таблице нет активных members)
+- консюмер медленнее продюсера, нужны реплики или оптимизация обработки
+- ошибка обработки сообщения, консюмер зацикливается на одном офсете
+
+Действия: поднять консюмера, при необходимости масштабировать, проверить логи на ошибки десериализации.
