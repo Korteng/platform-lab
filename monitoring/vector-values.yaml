@@ -1,0 +1,32 @@
+role: Agent
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+customConfig:
+  data_dir: /vector-data-dir
+  api:
+    enabled: false
+  sources:
+    kubernetes_logs:
+      type: kubernetes_logs
+      extra_field_selector: "metadata.namespace=finance-manager"
+  sinks:
+    loki:
+      type: loki
+      inputs: [kubernetes_logs]
+      endpoint: http://loki.monitoring.svc:3100
+      encoding:
+        codec: text
+      labels:
+        namespace: "{{ `{{ kubernetes.pod_namespace }}` }}"
+        pod: "{{ `{{ kubernetes.pod_name }}` }}"
+        container: "{{ `{{ kubernetes.container_name }}` }}"
+
+service:
+  enabled: false

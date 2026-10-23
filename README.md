@@ -12,7 +12,7 @@
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
 | W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
 | W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
-| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово (без логов) |
+| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово (без lag Kafka) |
 | W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
 
 ## Быстрый старт
@@ -127,6 +127,9 @@ make down
 - `docker network connect kind "$(hostname)"` не находил контейнер (hostname не равен имени контейнера). Исправление: ID контейнера из `/proc/self/mountinfo`.
 - Деплой падал по таймауту и откатывался (ревизии 8-9 `failed`): rolling update поднимал новые JVM рядом со старыми, память WSL (4 ГБ) уходила в swap, API-сервер кластера отвечал `TLS handshake timeout`. Исправление: `maxSurge: 0, maxUnavailable: 1`, WSL 5 ГБ, `--timeout 10m`. `--atomic` откатил релиз без ручных действий.
 
+- Loki падал с `mkdir /var/loki: read-only file system`: без PV чарт не монтирует каталог данных при read-only корне. Включён PV 2Gi, отключён sidecar правил.
+- Vector: Service с `spec.ports: Required value` (портов у агента нет) и `{{ }}` в labels воспринимались как шаблон Helm. Исправлено `service.enabled: false` и экранированием в `monitoring/vector-values.yaml`.
+
 ### Ограничения
 - Runner с `docker.sock` получает полный контроль над Docker хоста: подходит только для личной лаборатории и собственного кода.
 - Сборка и деплой запускаются вручную (кнопка в GitLab), кластер должен быть запущен.
@@ -172,8 +175,14 @@ make down
 | VictoriaMetrics single | vm/victoria-metrics-single 0.49.0 | хранение метрик, scrape (retention 7d, PV 2Gi) |
 | Grafana | grafana/grafana 10.5.15 | дашборд, datasource и дашборд провижинятся из ConfigMap |
 | vmalert + Alertmanager | vm/victoria-metrics-alert 0.51.0 | правила, получатель `devnull` |
+| Loki | grafana/loki 7.5.0 | логи, SingleBinary, PV 2Gi, retention 48h |
+| Vector | vector/vector 0.60.0 | DaemonSet, читает логи подов `finance-manager`, шлёт в Loki |
 
 Источники метрик: сама VictoriaMetrics, `finance-manager-app` (`/actuator/prometheus`), cAdvisor через API server (ClusterRole в `monitoring/rbac-cadvisor.yaml`). Интервал scrape 30s, окно rate 2m.
+
+### Логи
+
+Vector (DaemonSet, `kubernetes_logs`) собирает логи подов namespace `finance-manager` и отправляет в Loki с метками `namespace`, `pod`, `container`. В Grafana datasource Loki подключён провижинингом, смотреть в Explore: `{namespace="finance-manager", container="finance-manager-app"}`.
 
 ### Алерты
 
@@ -195,6 +204,6 @@ make down
 
 - kube-state-metrics не установлен, рестарты оцениваются через `changes(container_start_time_seconds)` за 10m.
 - Алерта по lag Kafka нет: нужен экспортёр.
-- Логов нет (Loki/Vector не поднимались): не хватает памяти в WSL.
+- Логи только namespace `finance-manager`, хранятся 48h, алертов по логам нет.
 - Alertmanager без реальных уведомлений, получатель `devnull`.
 - Доступ к UI через `kubectl port-forward`, ingress не настроен.

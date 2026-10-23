@@ -19,6 +19,11 @@ datasources:
         access: proxy
         url: http://vm-victoria-metrics-single-server.monitoring.svc.cluster.local:8428
         isDefault: true
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
