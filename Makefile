@@ -94,3 +94,14 @@ pg-break:
 	./scripts/pg-break.sh
 pg-restore:
 	./scripts/pg-restore.sh
+
+.PHONY: k-traefik
+k-traefik:
+	helm repo add traefik https://traefik.github.io/charts --force-update
+	helm upgrade --install traefik traefik/traefik --version 42.1.2 -n traefik --create-namespace -f k8s/traefik-values.yaml
+
+.PHONY: k-certs
+k-certs:
+	helm repo add jetstack https://charts.jetstack.io --force-update
+	helm upgrade --install cert-manager jetstack/cert-manager --version v1.21.3 -n cert-manager --create-namespace -f k8s/cert-manager-values.yaml --atomic --timeout 5m
+	kubectl apply -f k8s/cert-manager-issuers.yaml

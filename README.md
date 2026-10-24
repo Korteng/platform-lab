@@ -270,3 +270,26 @@ CronJob `pg-backup` в чарте `infra` (`charts/infra/templates/postgres-back
 ### Postmortems
 
 Разборы сбоев, которые случились по дороге, лежат в [docs/postmortems/](docs/postmortems/README.md): шторм рестартов из-за проб, падение деплоя по таймауту, DNS Kafka между namespace. Там же список мелких инцидентов и находка про readiness probe.
+
+### TLS
+
+cert-manager v1.21.3 (`make k-certs`, values в `k8s/cert-manager-values.yaml`) выпускает сертификат для `fm.localhost` из собственного самоподписанного центра: `ClusterIssuer selfsigned` создаёт корневой сертификат `platform-lab-ca` (ECDSA P-256, 1 год), `ClusterIssuer platform-lab-ca` подписывает им сертификат `fm-localhost` (90 дней, обновление за 15 дней до конца). Манифесты центра в `k8s/cert-manager-issuers.yaml`, Certificate и блок `tls` в Ingress в чарте `finance-manager` (`ingress.tls.*` в values).
+
+Traefik (`make k-traefik`, values в `k8s/traefik-values.yaml`) перенаправляет HTTP на HTTPS (`308`). Раньше Traefik был поставлен руками без values в репозитории, теперь установка воспроизводима.
+
+Проверка (через `kubectl port-forward svc/traefik 8443:443`):
+
+- без доверия к центру: `curl: (60) SSL certificate ... unable to get local issuer certificate`.
+- с центром (`--cacert`, `ca.crt` из Secret `platform-lab-ca`): `200`.
+- `openssl s_client`: `issuer=CN=platform-lab-ca`, срок 24 октября 2026 по 22 января 2027, `subject` пустой, имя только в SAN.
+- HTTP на 8080: `308 Permanent Redirect`, `Location: https://fm.localhost/`.
+
+Находки: `helm upgrade --reuse-values` не подмешивает новые значения чарта (`nil pointer evaluating interface {}.enabled` на `ingress.tls`), для релиза с `--set image.tag` из CI нужен `--reset-then-reuse-values`. Установка cert-manager и Traefik проверялась после временного сбоя DNS в WSL.
+
+### Ограничения TLS
+
+- Центр самоподписанный: браузеры ему не доверяют, нужен импорт `ca.crt` или `--cacert`. Для реального домена нужен ACME (Let's Encrypt), здесь не делался.
+- TLS заканчивается на Traefik, дальше до подов трафик идёт без шифрования внутри кластера.
+- Порт 443 в kind на хост не проброшен: редирект ведёт на `https://fm.localhost/`, который без порт-форварда недоступен. Фронт по-прежнему ходит в gateway по HTTP через NodePort 30090 (`localhost:8090`) мимо TLS.
+- Обновление сертификата по `renewBefore` и ротация корневого центра не проверялись.
+- Сертификат только для `fm.localhost`, других хостов (Grafana и т.д.) через Ingress нет.

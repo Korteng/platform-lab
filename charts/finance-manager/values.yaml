@@ -121,3 +121,7 @@ ingress:
   enabled: true
   className: traefik
   host: fm.localhost
+  tls:
+    enabled: true
+    secretName: fm-localhost-tls
+    issuer: platform-lab-ca

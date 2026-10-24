@@ -1,0 +1,12 @@
+service:
+  spec:
+    type: ClusterIP
+
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
