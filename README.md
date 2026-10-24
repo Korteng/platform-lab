@@ -306,3 +306,59 @@ Traefik (`make k-traefik`, values в `k8s/traefik-values.yaml`) перенапр
 - Retention: `retention.ms=60000`, `segment.ms=60000`. Через несколько минут earliest offset сравнялся с log-end во всех партициях (6, 4, 0), чтение с начала вернуло 0 сообщений. Удалились и сообщения в партиции, куда после установки retention ничего не писали: активный сегмент закрывается и удаляется, если все его записи старше retention.
 
 Оговорки: один брокер и RF 1 (репликация, ISR, отказ брокера не проверялись), 10 сообщений, rebalance проверен консольными консюмерами, а не приложением, retention проверялся на тестовом топике с минутными значениями. `TimeoutException` в конце `kafka-console-consumer --timeout-ms` ожидаема. Консоль-консюмеры, запущенные через `exec -it` и брошенные закрытием окна, остаются жить в поде и держат группу (`GroupNotEmptyException` при удалении): убирать по PID через `kill -9` и ждать таймаута сессии (около 45 с).
+
+## Архитектура
+
+```mermaid
+flowchart LR
+  user["Браузер"]
+  subgraph kind["kind: кластер platform-lab (1 нода)"]
+    subgraph tr["ns traefik"]
+      traefik["Traefik v3.7<br/>TLS, redirect HTTP→HTTPS"]
+    end
+    subgraph cm["ns cert-manager"]
+      certm["cert-manager<br/>самоподписанный CA"]
+    end
+    subgraph fm["ns finance-manager"]
+      frontend["frontend :8080"]
+      gateway["api-gateway :8090<br/>NodePort 30090"]
+      app["finance-manager-app :8080"]
+      eureka["discovery-server :8761<br/>Eureka"]
+      pg[("Postgres<br/>StatefulSet")]
+      redis[("Redis<br/>PVC, AOF")]
+      kafka["Kafka<br/>1 брокер, RF 1"]
+      rabbit["RabbitMQ"]
+      bkp["CronJob pg-backup<br/>каждые 6 ч + verify"]
+      kexp["kafka-exporter"]
+    end
+    subgraph mon["ns monitoring"]
+      vm["VictoriaMetrics"]
+      vmalert["vmalert + Alertmanager"]
+      grafana["Grafana"]
+    end
+  end
+  ci["GitLab CI<br/>runner на хосте"]
+
+  user -->|"HTTPS, port-forward 8443"| traefik
+  traefik -->|"/"| frontend
+  traefik -->|"/api"| gateway
+  frontend -->|"HTTP, NodePort 30090"| gateway
+  gateway -.->|"через Eureka, маршруты не проверялись"| app
+  gateway --> eureka
+  app --> eureka
+  app --> pg
+  app -.->|"настроено, использование не проверялось"| redis
+  app -.->|"настроено, использование не проверялось"| kafka
+  app -.->|"креды в Deployment, использование не проверялось"| rabbit
+  bkp --> pg
+  certm -.->|"выпускает сертификат fm.localhost"| traefik
+  kexp --> kafka
+  vm -->|"scrape"| app
+  vm -->|"scrape"| kexp
+  vm -->|"scrape cAdvisor"| kind
+  vmalert --> vm
+  grafana --> vm
+  ci -.->|"helm upgrade, образы в kind"| kind
+```
+
+Что подтверждено на кластере: маршруты Ingress (`/` в frontend, `/api` в gateway), регистрация gateway и app в Eureka, креды Postgres в app, сервисы и порты. Пунктиром отмечено то, что настроено (общий ConfigMap `fm-config` подключён ко всем четырём сервисам), но фактическое использование не проверялось: Redis, Kafka и RabbitMQ со стороны приложения, маршрутизация gateway на app. На схеме нет Loki и Vector (развёрнуты в W5, сейчас отключены для экономии памяти) и compose-варианта запуска. notification-service, camunda-service и python-observer в кластере не развёрнуты.
