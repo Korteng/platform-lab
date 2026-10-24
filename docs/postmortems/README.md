@@ -7,6 +7,7 @@
 | 1 | Шторм рестартов подов на слабой машине из-за дефолтных проб | W2 | [01-probe-restart-storm.md](01-probe-restart-storm.md) |
 | 2 | Деплой падает по `context deadline exceeded` из-за surge при rolling update | W3 | [02-deploy-surge-timeout.md](02-deploy-surge-timeout.md) |
 | 3 | Scrape экспортёра Kafka падает: брокер объявляет имя, которое не резолвится из другого namespace | W5 | [03-kafka-exporter-dns.md](03-kafka-exporter-dns.md) |
+| 4 | Плановый бэкап Postgres упал на холодном старте: имя postgres не резолвилось, Job без ретраев | W6 | [04-pg-backup-cold-start-dns.md](04-pg-backup-cold-start-dns.md) |
 
 ## Мелкие инциденты без отдельного разбора
 

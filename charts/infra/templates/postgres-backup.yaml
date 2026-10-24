@@ -21,7 +21,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 0
+      backoffLimit: 3
       template:
         metadata:
           labels: {app: pg-backup}
@@ -44,6 +44,11 @@ spec:
               args:
                 - |
                   set -euo pipefail
+                  for i in $(seq 1 24); do
+                    pg_isready -q && break
+                    echo "waiting for postgres ($i/24)"; sleep 5
+                  done
+                  pg_isready -q || { echo "postgres not ready"; exit 1; }
                   f=/backups/fm-$(date +%Y%m%d-%H%M%S).dump
                   pg_dump -d "$DB" -Fc -f "$f"
                   sha256sum "$f" > "$f.sha256"
