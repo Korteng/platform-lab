@@ -86,3 +86,11 @@ a-run:
 
 a-check:
 	ansible-playbook ansible/site.yml --check --diff
+
+.PHONY: pg-backup pg-break pg-restore
+pg-backup:
+	./scripts/pg-backup.sh
+pg-break:
+	./scripts/pg-break.sh
+pg-restore:
+	./scripts/pg-restore.sh

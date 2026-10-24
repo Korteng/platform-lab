@@ -13,7 +13,7 @@
 | W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
 | W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
 | W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово |
-| W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | план |
+| W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | в работе (Postgres backup готов) |
 
 ## Быстрый старт
 
@@ -212,3 +212,21 @@ Vector (DaemonSet, `kubernetes_logs`) собирает логи подов names
 - Логи только namespace `finance-manager`, хранятся 48h, алертов по логам нет.
 - Alertmanager без реальных уведомлений, получатель `devnull`.
 - Доступ к UI через `kubectl port-forward`, ingress не настроен.
+
+## W6: операции с данными
+
+### Postgres backup/restore
+
+Логический бэкап `pg_dump -Fc` из пода `postgres-0`, восстановление `pg_restore --clean --if-exists --no-owner`. Скрипты в `scripts/`, цели Makefile: `make pg-backup`, `make pg-break`, `make pg-restore`. Пароли в скриптах не фигурируют: `psql` и `pg_dump` берут пользователя и БД из переменных окружения внутри пода.
+
+- `pg-backup`: дамп в `backups/` (в `.gitignore`), рядом `.sha256` и `.counts` (число строк по таблицам на момент дампа).
+- `pg-break`: `TRUNCATE "transaction", budget` имитирует потерю данных.
+- `pg-restore`: проверка контрольной суммы, восстановление из последнего дампа, сверка счётчиков с `.counts`.
+
+Результат прогона: до потери `budget` 1, `transaction` 1; после `pg-break` 0 и 0; после `pg-restore` 1 и 1, счётчики совпали с дампом.
+
+### Ограничения
+
+- В базе по одной строке в `budget` и `transaction`: механизм доказан, объём и время восстановления не измерялись.
+- Бэкап ручной, локальный, без расписания, без копии вне машины, без PITR.
+- Потеря имитирована удалением строк, не потерей тома. Восстановление выполнено в ту же БД при работающем приложении, проверка дампа в отдельной БД не делалась.
