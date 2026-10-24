@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-backups
+  labels: {app: pg-backup}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.pgBackup.storage }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup
+  labels: {app: pg-backup}
+spec:
+  schedule: {{ .Values.pgBackup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: {app: pg-backup}
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          containers:
+            - name: backup
+              image: {{ .Values.postgres.image }}
+              env:
+                - {name: PGHOST, value: postgres}
+                - name: PGUSER
+                  valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: FINANCE_DB_USER}}
+                - name: PGPASSWORD
+                  valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: FINANCE_DB_PASSWORD}}
+                - name: DB
+                  valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: FINANCE_DB_NAME}}
+                - {name: KEEP, value: {{ .Values.pgBackup.keep | quote }}}
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  f=/backups/fm-$(date +%Y%m%d-%H%M%S).dump
+                  pg_dump -d "$DB" -Fc -f "$f"
+                  sha256sum "$f" > "$f.sha256"
+                  counts() {
+                    psql -d "$1" -At -F'|' -c "select 'app_user', count(*) from app_user union all select 'budget', count(*) from budget union all select 'category', count(*) from category union all select 'transaction', count(*) from \"transaction\" order by 1"
+                  }
+                  psql -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS fm_verify" -c "CREATE DATABASE fm_verify"
+                  pg_restore -d fm_verify --no-owner "$f"
+                  a=$(counts "$DB")
+                  b=$(counts fm_verify)
+                  psql -d postgres -c "DROP DATABASE fm_verify"
+                  if [ "$a" != "$b" ]; then
+                    echo "VERIFY FAILED"; echo "source:"; echo "$a"; echo "restored:"; echo "$b"
+                    exit 1
+                  fi
+                  echo "VERIFY OK"; echo "$a"
+                  ls -1t /backups/fm-*.dump | tail -n +$((KEEP + 1)) | while read -r x; do rm -f "$x" "$x.sha256"; done
+                  echo "BACKUP OK: $f"
+              volumeMounts:
+                - {name: backups, mountPath: /backups}
+              resources:
+                {{- toYaml .Values.pgBackup.resources | nindent 16 }}
+          volumes:
+            - name: backups
+              persistentVolumeClaim: {claimName: pg-backups}
