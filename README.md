@@ -230,3 +230,21 @@ Vector (DaemonSet, `kubernetes_logs`) собирает логи подов names
 - В базе по одной строке в `budget` и `transaction`: механизм доказан, объём и время восстановления не измерялись.
 - Бэкап ручной, локальный, без расписания, без копии вне машины, без PITR.
 - Потеря имитирована удалением строк, не потерей тома. Восстановление выполнено в ту же БД при работающем приложении, проверка дампа в отдельной БД не делалась.
+
+### Redis persistence
+
+Redis переведён с Deployment на StatefulSet (`charts/infra/templates/redis.yaml`) с PVC 1Gi (`data-redis-0`) на `/data` и включённым AOF: `--appendonly yes --appendfsync everysec`. Размер тома задаётся `redis.storage` в `charts/infra/values.yaml`.
+
+Проверка до изменения (Deployment без тома): ключ записан, `redis-cli save`, под удалён, после пересоздания ключа нет.
+
+Проверка после изменения:
+
+- `set persist:test after-change`, `kubectl delete pod redis-0`: ключ на месте.
+- `set persist:hard still-here`, `kubectl delete pod redis-0 --grace-period=0 --force`: оба ключа на месте.
+
+### Ограничения Redis
+
+- Жёсткое убийство проверено через несколько секунд после записи: окно `appendfsync everysec` (до 1 секунды потерянных записей) не проверялось.
+- Приложение сейчас не хранит ключи в Redis (`dbsize 0`), тест выполнен на тестовых ключах.
+- Один экземпляр, без репликации и Sentinel, том на `standard` StorageClass kind (локальный диск ноды), бэкапа тома нет.
+- Лимит памяти пода 64Mi остался прежним: на больших данных переписывание AOF может упереться в него.
