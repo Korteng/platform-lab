@@ -105,3 +105,12 @@ k-certs:
 	helm repo add jetstack https://charts.jetstack.io --force-update
 	helm upgrade --install cert-manager jetstack/cert-manager --version v1.21.3 -n cert-manager --create-namespace -f k8s/cert-manager-values.yaml --atomic --timeout 5m
 	kubectl apply -f k8s/cert-manager-issuers.yaml
+
+kafka-lab-partitions:
+	bash scripts/kafka-lab.sh partitions
+
+kafka-lab-retention:
+	bash scripts/kafka-lab.sh retention
+
+kafka-lab-cleanup:
+	bash scripts/kafka-lab.sh cleanup
