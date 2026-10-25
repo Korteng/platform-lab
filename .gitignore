@@ -3,3 +3,9 @@
 .idea/
 .vscode/
 backups/
+
+# terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
