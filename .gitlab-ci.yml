@@ -50,3 +50,14 @@ deploy-kind:
       done
     - helm upgrade --install fm charts/finance-manager -n finance-manager --set image.tag=$CI_COMMIT_SHORT_SHA --atomic --timeout 10m
     - kubectl -n finance-manager get pods
+
+tofu-validate:
+  stage: lint
+  image:
+    name: ghcr.io/opentofu/opentofu:1.13.2
+    entrypoint: [""]
+  script:
+    - cd terraform
+    - tofu fmt -check -recursive
+    - tofu init -backend=false
+    - tofu validate
