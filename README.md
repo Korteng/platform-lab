@@ -73,6 +73,7 @@ flowchart LR
 | W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector (сейчас отключены для экономии памяти), алерты, runbook | готово |
 | W6 | Postgres backup (ручной и по расписанию с проверкой восстановления), Redis AOF, Kafka basics, TLS (cert-manager), 4 postmortem, диаграмма | готово |
 | Zabbix | Zabbix server + агент (Ansible-роль), мониторинг хоста | готово |
+| ArgoCD | GitOps: Argo CD ведёт демо-чарт из Git (auto-sync, selfHeal, откат через git revert) | готово |
 
 ## Быстрый старт
 
@@ -393,3 +394,26 @@ Traefik (`make k-traefik`, values в `k8s/traefik-values.yaml`) перенапр
 - Контрольная сумма `zabbix-release` зафиксирована при первой загрузке, независимо подтвердить её нечем.
 - Метрики CPU и памяти агента отражают ядро WSL, а не лимит контейнера в 256 МБ.
 - Только пассивные проверки, без TLS и PSK между сервером и агентом, оповещения не настроены.
+
+## Argo CD: GitOps на демо-приложении
+
+Argo CD ставится в kind Helm-чартом (`make k-argocd`, чарт argo/argo-cd 10.11.1, Argo CD v3.5.6, values в `k8s/argocd-values.yaml`: Dex и notifications выключены, лимиты памяти заданы, `server.insecure` для доступа по HTTP через port-forward). Он ведёт чарт `charts/gitops-demo` (nginx-unprivileged, 1 реплика) из ветки `main` публичного репозитория GitHub: объект `Application` в `k8s/argocd/gitops-demo-app.yaml` с `automated: prune + selfHeal`.
+
+Что проверено:
+- Дрейф: `kubectl scale ... --replicas=3` вручную, лишние поды прожили около 3 минут и были убраны Argo CD (период опроса и самолечения по умолчанию, быстрее не проверялось).
+- Изменение через Git: коммит `replicas: 2` в `values.yaml`, после `refresh` появился второй под.
+- Откат через Git: `git revert` этого коммита вернул один под, в UI `Synced` и `Healthy`.
+
+![Argo CD: gitops-demo](docs/img/argocd-gitops-demo.png)
+
+### Что сломалось по дороге
+- Первая установка была прервана `Ctrl+C`: у чарта есть pre-install hook, Helm ждёт его и без `--wait`, прерывание оставило релиз в отменённом состоянии.
+- `kind load docker-image` падал с `content digest ... not found` (образ-манифест на Docker Desktop): образ загружается через `docker save | ctr images import`.
+- Образ Redis из ECR скачивался 1 мин 9 с с таймаутом на первой попытке (канал WSL).
+- При совместной работе Argo CD и всего стека кластер упёрся в память WSL: `kube-controller-manager` в CrashLoopBackOff, CoreDNS недоступен, `ComparisonError` по DNS-запросу к `argocd-repo-server`. Помогло выключение стека (`scale --replicas=0`) и рестарт ноды.
+
+### Ограничения Argo CD
+- Под управлением Argo CD только демо-приложение, а не основной стек Finance Manager: он по-прежнему деплоится Helm из GitLab CI вручную.
+- `Application` применён командой `kubectl apply`, App of Apps и ApplicationSet не использовались.
+- Репозиторий публичный, секреты и доступ к приватным репозиториям не настраивались; SSO и RBAC нет, начальный пароль admin из Secret, доступ только через port-forward.
+- Синхронизация по опросу (около 3 минут) либо ручным `refresh`, webhook не настроен.
