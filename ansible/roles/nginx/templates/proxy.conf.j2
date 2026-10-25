@@ -1,0 +1,38 @@
+proxy_cache_path /var/cache/nginx/lab levels=1:2 keys_zone=lab_cache:10m max_size=100m inactive=10m use_temp_path=off;
+
+{% if nginx_origin_enabled %}
+# Учебный origin на loopback: отдаёт время ответа, чтобы по нему видеть работу кэша.
+server {
+    listen 127.0.0.1:{{ nginx_origin_port }};
+    location / {
+        default_type text/plain;
+        return 200 "origin $time_iso8601\n";
+    }
+}
+{% endif %}
+
+upstream lab_backend {
+    server {{ nginx_upstream }};
+}
+
+server {
+    listen {{ nginx_listen_port }} default_server;
+    server_name _;
+    gzip on;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        proxy_pass http://lab_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_cache lab_cache;
+        proxy_cache_valid 200 {{ nginx_cache_ttl }};
+        add_header X-Cache-Status $upstream_cache_status always;
+    }
+}

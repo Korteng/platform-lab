@@ -114,3 +114,7 @@ kafka-lab-retention:
 
 kafka-lab-cleanup:
 	bash scripts/kafka-lab.sh cleanup
+
+.PHONY: a-nginx
+a-nginx:
+	ansible-playbook ansible/site.yml --tags nginx

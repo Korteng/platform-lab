@@ -4,3 +4,5 @@
   roles:
     - base
     - tools
+    - role: nginx
+      tags: [nginx]

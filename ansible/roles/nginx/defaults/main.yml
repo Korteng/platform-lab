@@ -1,0 +1,5 @@
+nginx_listen_port: 80
+nginx_origin_enabled: true
+nginx_origin_port: 8081
+nginx_upstream: "127.0.0.1:8081"
+nginx_cache_ttl: 30s
