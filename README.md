@@ -74,6 +74,7 @@ flowchart LR
 | W6 | Postgres backup (ручной и по расписанию с проверкой восстановления), Redis AOF, Kafka basics, TLS (cert-manager), 4 postmortem, диаграмма | готово |
 | Zabbix | Zabbix server + агент (Ansible-роль), мониторинг хоста | готово |
 | ArgoCD | GitOps: Argo CD ведёт демо-чарт из Git (auto-sync, selfHeal, откат через git revert) | готово |
+| Terraform | OpenTofu: модуль web, окружения dev и stage, state в GitLab, `fmt -check` в CI | готово |
 
 ## Быстрый старт
 
@@ -417,3 +418,35 @@ Argo CD ставится в kind Helm-чартом (`make k-argocd`, чарт ar
 - `Application` применён командой `kubectl apply`, App of Apps и ApplicationSet не использовались.
 - Репозиторий публичный, секреты и доступ к приватным репозиториям не настраивались; SSO и RBAC нет, начальный пароль admin из Secret, доступ только через port-forward.
 - Синхронизация по опросу (около 3 минут) либо ручным `refresh`, webhook не настроен.
+
+## Terraform / OpenTofu: два окружения из одного модуля, state в GitLab
+
+Модуль `terraform/modules/web` (docker-сеть, образ, контейнер nginx с лимитом памяти) вызывается дважды: `dev` на порту 8091 и `stage` на 8092. Провайдер `kreuzwerker/docker`, инструмент OpenTofu 1.13 (HCL и провайдеры совместимы с Terraform). State лежит в GitLab (HTTP backend с блокировками), адрес и токен задаются только переменными окружения `TF_HTTP_*`, в репозитории их нет.
+
+Что проверено:
+- `plan` и `apply` с нуля: 3 ресурса на окружение.
+- Drift: контейнер удалён руками, `plan` находит расхождение, `apply` возвращает.
+- Рефакторинг в модуль через блоки `moved`: dev не пересоздавался (`0 to destroy`).
+- Идемпотентность: повторный `plan` даёт `No changes`.
+- Миграция локального state в GitLab (`init -migrate-state`), после неё `plan` чистый.
+- В CI джоба `tofu-fmt` (`fmt -check -recursive`).
+
+![GitLab: Terraform state lab](docs/img/gitlab-tf-state.png)
+
+Запуск (нужны переменные `TF_HTTP_*` и токен с правом `api`):
+
+```bash
+cd terraform && tofu init && tofu plan
+```
+
+### Что сломалось по дороге
+- Репозитория HashiCorp для Ubuntu 26.04 нет, а `releases.hashicorp.com` отвечал 404 (блок по региону): поставлен OpenTofu из GitHub-релиза.
+- `plan` показывал вечный дифф `memory_swap = 128 -> null` (Docker сам выставляет swap в 2x от памяти): значение задано явно в модуле.
+- Первая миграция state упала с `invalid auth`: использовался токен только для `git push` (scope `write_repository`), нужен был отдельный токен со scope `api`.
+
+### Ограничения
+- `tofu validate` в CI нет: `registry.opentofu.org` отдаёт 403 из сети раннера (и с хоста без VPN), провайдер там не скачать. `validate` выполняется локально перед коммитом, где провайдер уже установлен.
+- Управляются только локальные Docker-ресурсы, облако и Kubernetes-ресурсы через Terraform не затрагивались.
+- Раздел про apply в CI отсутствует: `plan` и `apply` запускаются только вручную с рабочей машины, раннер state не использует.
+- Токен для state персональный, срок 30 дней, ротация не автоматизирована.
+- Параллельная работа с блокировкой state не проверялась.
