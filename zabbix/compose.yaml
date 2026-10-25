@@ -1,0 +1,54 @@
+name: zabbix-lab
+
+services:
+  zbx-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?set ZBX_DB_PASSWORD in zabbix/.env}
+      POSTGRES_DB: zabbix
+    volumes:
+      - zbx-db:/var/lib/postgresql/data
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [zabbix-net]
+
+  zbx-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
+    environment:
+      DB_SERVER_HOST: zbx-db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD}
+      POSTGRES_DB: zabbix
+    depends_on:
+      zbx-db:
+        condition: service_healthy
+    mem_limit: 512m
+    networks: [zabbix-net]
+
+  zbx-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
+    environment:
+      ZBX_SERVER_HOST: zbx-server
+      DB_SERVER_HOST: zbx-db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD}
+      POSTGRES_DB: zabbix
+      PHP_TZ: Europe/Moscow
+    depends_on:
+      - zbx-server
+    ports:
+      - "8089:8080"
+    mem_limit: 256m
+    networks: [zabbix-net]
+
+volumes:
+  zbx-db:
+
+networks:
+  zabbix-net:
+    name: zabbix-net

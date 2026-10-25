@@ -118,3 +118,16 @@ kafka-lab-cleanup:
 .PHONY: a-nginx
 a-nginx:
 	ansible-playbook ansible/site.yml --tags nginx
+
+.PHONY: a-zabbix z-up z-down
+a-zabbix:
+	ansible-playbook ansible/site.yml --tags zabbix
+z-up:
+	docker compose -f zabbix/compose.yaml --env-file zabbix/.env up -d
+	-docker network connect zabbix-net ansible-target
+z-down:
+	docker compose -f zabbix/compose.yaml down
+
+.PHONY: k-argocd
+k-argocd:
+	helm upgrade --install argocd argo/argo-cd --version 10.11.1 -n argocd --create-namespace -f k8s/argocd-values.yaml
