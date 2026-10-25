@@ -1,0 +1,63 @@
+---
+- name: Download zabbix-release package (official Zabbix apt repo)
+  ansible.builtin.get_url:
+    url: "{{ zabbix_release_url }}"
+    dest: /tmp/zabbix-release.deb
+    checksum: "sha256:{{ zabbix_release_sha256 }}"
+    mode: "0644"
+    timeout: 30
+  retries: 3
+  delay: 5
+  register: zabbix_release_download
+  until: zabbix_release_download is succeeded
+
+- name: Install zabbix-release package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+  register: zabbix_release_pkg
+
+- name: Refresh apt cache after adding the Zabbix repo
+  ansible.builtin.apt:
+    update_cache: true
+  when: zabbix_release_pkg is changed
+
+- name: Install zabbix-agent
+  ansible.builtin.apt:
+    name: zabbix-agent
+    state: present
+
+- name: Configure zabbix-agent (passive checks from the server)
+  ansible.builtin.template:
+    src: lab.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.d/lab.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zabbix agent
+
+- name: Disable active checks (passive mode only)
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_agentd.conf
+    regexp: '^#?\s*ServerActive=127\.0\.0\.1$'
+    line: '# ServerActive disabled by Ansible: passive checks only'
+  notify: Restart zabbix agent
+
+- name: Create runtime dir for the PID file (no systemd to do it)
+  ansible.builtin.file:
+    path: /run/zabbix
+    state: directory
+    owner: zabbix
+    group: zabbix
+    mode: "0755"
+
+- name: Check whether zabbix_agentd is running
+  ansible.builtin.command: pgrep -x zabbix_agentd
+  register: zabbix_agent_running
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Start zabbix_agentd (container has no init system)
+  ansible.builtin.command: zabbix_agentd -c /etc/zabbix/zabbix_agentd.conf
+  when: zabbix_agent_running.rc != 0
+  changed_when: true

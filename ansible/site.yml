@@ -6,3 +6,5 @@
     - tools
     - role: nginx
       tags: [nginx]
+    - role: zabbix_agent
+      tags: [zabbix]

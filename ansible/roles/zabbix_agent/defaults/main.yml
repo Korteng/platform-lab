@@ -1,0 +1,5 @@
+zabbix_agent_server: zbx-server
+zabbix_agent_hostname: "{{ inventory_hostname }}"
+zabbix_agent_port: 10050
+zabbix_release_url: https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.0+ubuntu24.04_all.deb
+zabbix_release_sha256: 4f206504c2bc1cff36edf762e2274d0686b0e796b772533c95d04bbe265654de

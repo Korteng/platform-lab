@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gitops-demo
+description: Demo workload managed by Argo CD (GitOps)
+type: application
+version: 0.1.0
+appVersion: "1.27"

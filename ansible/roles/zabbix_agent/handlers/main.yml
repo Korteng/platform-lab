@@ -1,0 +1,7 @@
+---
+- name: Restart zabbix agent
+  ansible.builtin.shell: |
+    pkill -x zabbix_agentd || true
+    sleep 1
+    zabbix_agentd -c /etc/zabbix/zabbix_agentd.conf
+  changed_when: true
