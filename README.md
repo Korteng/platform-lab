@@ -2,7 +2,65 @@
 
 Инфраструктурный проект: эксплуатация микросервисного приложения [Finance Manager](https://github.com/Korteng/finance-manager) (Java/Spring Boot, Kafka, RabbitMQ, Redis, PostgreSQL, Eureka, Spring Cloud Gateway, Camunda 7) как платформы. Код приложения здесь не дублируется, берётся из соседней папки.
 
-Цель: пройти путь Java-разработчика к Platform/DevOps на реальном стеке: контейнеризация, Kubernetes + Helm, CI/CD (GitHub Actions + GitLab CI), Ansible, observability, эксплуатация БД и брокеров.
+В kind развёрнуты discovery-server, finance-manager-app, api-gateway и frontend плюс инфраструктура (Postgres, Redis, RabbitMQ, Kafka). notification-service, camunda-service и python-observer запускаются только через compose (профили).
+
+Цель: пройти путь Java-разработчика к Platform/DevOps на реальном стеке: контейнеризация, Kubernetes + Helm, CI/CD (GitLab CI), Ansible, observability, эксплуатация БД и брокеров.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+  user["Браузер"]
+  subgraph kind["kind: кластер platform-lab (1 нода)"]
+    subgraph tr["ns traefik"]
+      traefik["Traefik v3.7<br/>TLS, redirect HTTP→HTTPS"]
+    end
+    subgraph cm["ns cert-manager"]
+      certm["cert-manager<br/>самоподписанный CA"]
+    end
+    subgraph fm["ns finance-manager"]
+      frontend["frontend :8080"]
+      gateway["api-gateway :8090<br/>NodePort 30090"]
+      app["finance-manager-app :8080"]
+      eureka["discovery-server :8761<br/>Eureka"]
+      pg[("Postgres<br/>StatefulSet")]
+      redis[("Redis<br/>PVC, AOF")]
+      kafka["Kafka<br/>1 брокер, RF 1"]
+      rabbit["RabbitMQ"]
+      bkp["CronJob pg-backup<br/>каждые 6 ч + verify"]
+      kexp["kafka-exporter"]
+    end
+    subgraph mon["ns monitoring"]
+      vm["VictoriaMetrics"]
+      vmalert["vmalert + Alertmanager"]
+      grafana["Grafana"]
+    end
+  end
+  ci["GitLab CI<br/>runner на хосте"]
+
+  user -->|"HTTPS, port-forward 8443"| traefik
+  traefik -->|"/"| frontend
+  traefik -->|"/api"| gateway
+  frontend -->|"HTTP, NodePort 30090"| gateway
+  gateway -.->|"через Eureka, маршруты не проверялись"| app
+  gateway --> eureka
+  app --> eureka
+  app --> pg
+  app -.->|"настроено, использование не проверялось"| redis
+  app -.->|"настроено, использование не проверялось"| kafka
+  app -.->|"креды в Deployment, использование не проверялось"| rabbit
+  bkp --> pg
+  certm -.->|"выпускает сертификат fm.localhost"| traefik
+  kexp --> kafka
+  vm -->|"scrape"| app
+  vm -->|"scrape"| kexp
+  vm -->|"scrape cAdvisor"| kind
+  vmalert --> vm
+  grafana --> vm
+  ci -.->|"helm upgrade, образы в kind"| kind
+```
+
+Что подтверждено на кластере: маршруты Ingress (`/` в frontend, `/api` в gateway), регистрация gateway и app в Eureka, креды Postgres в app, сервисы и порты. Пунктиром отмечено то, что настроено (общий ConfigMap `fm-config` подключён ко всем четырём сервисам), но фактическое использование не проверялось: Redis, Kafka и RabbitMQ со стороны приложения, маршрутизация gateway на app. На схеме нет Loki и Vector (развёрнуты в W5, сейчас отключены для экономии памяти) и compose-варианта запуска. notification-service, camunda-service и python-observer в кластере не развёрнуты.
 
 ## Статус
 
@@ -10,10 +68,11 @@
 |---|---|---|
 | W1 | Docker: общий Dockerfile, healthcheck, лимиты, compose с профилями | готово |
 | W2 | kind + Helm-чарты, HPA, Ingress (Traefik), metrics-server, откат через --atomic | готово |
-| W3 | GitLab CI (свой runner): lint, build, deploy в kind по коммиту | готово |
-| W4 | Ansible: роли base и tools, идемпотентный прогон на SSH-цели | готово |
-| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector, алерты, runbook | готово |
-| W6 | Postgres backup/restore, Kafka, Redis, Nginx/HAProxy, TLS, postmortem | в работе (Postgres backup готов) |
+| W3 | GitLab CI (свой runner): lint автоматически, build и deploy в kind вручную (кнопка) | готово |
+| W4 | Ansible: роли base, tools, nginx (reverse proxy + кэш), zabbix_agent, идемпотентный прогон на SSH-цели | готово |
+| W5 | Observability: VictoriaMetrics, Grafana, Loki/Vector (сейчас отключены для экономии памяти), алерты, runbook | готово |
+| W6 | Postgres backup (ручной и по расписанию с проверкой восстановления), Redis AOF, Kafka basics, TLS (cert-manager), 4 postmortem, диаграмма | готово |
+| Zabbix | Zabbix server + агент (Ansible-роль), мониторинг хоста | готово |
 
 ## Быстрый старт
 
@@ -127,11 +186,6 @@ make down
 - `docker network connect kind "$(hostname)"` не находил контейнер (hostname не равен имени контейнера). Исправление: ID контейнера из `/proc/self/mountinfo`.
 - Деплой падал по таймауту и откатывался (ревизии 8-9 `failed`): rolling update поднимал новые JVM рядом со старыми, память WSL (4 ГБ) уходила в swap, API-сервер кластера отвечал `TLS handshake timeout`. Исправление: `maxSurge: 0, maxUnavailable: 1`, WSL 5 ГБ, `--timeout 10m`. `--atomic` откатил релиз без ручных действий.
 
-- Loki падал с `mkdir /var/loki: read-only file system`: без PV чарт не монтирует каталог данных при read-only корне. Включён PV 2Gi, отключён sidecar правил.
-- Vector: Service с `spec.ports: Required value` (портов у агента нет) и `{{ }}` в labels воспринимались как шаблон Helm. Исправлено `service.enabled: false` и экранированием в `monitoring/vector-values.yaml`.
-
-- Kafka объявляет себя коротким именем `kafka`, из namespace `monitoring` оно не резолвится (`lookup kafka ... server misbehaving`), scrape экспортёра падал по таймауту. Экспортёр перенесён в `finance-manager`.
-
 ### Ограничения
 - Runner с `docker.sock` получает полный контроль над Docker хоста: подходит только для личной лаборатории и собственного кода.
 - Сборка и деплой запускаются вручную (кнопка в GitLab), кластер должен быть запущен.
@@ -140,7 +194,7 @@ make down
 
 ## W4: Ansible (подготовка хоста)
 
-Роли `base` и `tools` настраивают Linux-хост по SSH. Цель: контейнер `ansible-target` (Ubuntu 24.04 + sshd, лимит 256 МБ). Control node: WSL Ubuntu, ansible-core 2.20.1.
+Роли `base`, `tools`, `nginx` и `zabbix_agent` настраивают Linux-хост по SSH. Цель: контейнер `ansible-target` (Ubuntu 24.04 + sshd, лимит 256 МБ). Control node: WSL Ubuntu, ansible-core 2.20.1.
 
 | Команда | Что делает |
 |---|---|
@@ -150,11 +204,13 @@ make down
 | `make a-run` | применяет плейбук |
 | `make a-check` | режим проверки с diff |
 | `make a-nginx` | применяет только роль `nginx` (тег) |
+| `make a-zabbix` | применяет только роль `zabbix_agent` (тег) |
 
 ### Что делают роли
 - `base`: базовые пакеты, рабочий каталог `/opt/platform-lab`.
 - `tools`: kubectl v1.37.1, helm v3.22.1, kind v0.33.0 с версией в имени файла, симлинки в `/usr/local/bin`, проверка checksum с официальных источников, повторы при сетевых сбоях.
 - `nginx`: reverse proxy с кэшем (`proxy_cache`, зона 10 МБ, TTL 200-ответов 30 с), заголовок `X-Cache-Status`, `/healthz`, gzip. Конфиг из шаблона, проверка `nginx -t` до запуска. Апстрим задаётся переменной `nginx_upstream`; по умолчанию поднимается локальный origin на 127.0.0.1:8081, отдающий текущее время (по нему видно, что ответ пришёл из кэша). В контейнере нет init, поэтому nginx стартует командой с защитой `pgrep -x nginx`, а handler делает `nginx -s reload` только если процесс жив.
+- `zabbix_agent`: см. раздел [Zabbix](#zabbix-мониторинг-хоста).
 
 ### Результат
 - Первый прогон: `changed`, повторный: `changed=0`.
@@ -209,6 +265,9 @@ Vector (DaemonSet, `kubernetes_logs`) собирает логи подов names
 - Readiness probe приложения не включает БД: при остановленном postgres под остаётся `Ready`, а `/actuator/health` отдаёт 503. Трафик продолжает идти на неработающий под. Исправление (probe с учётом БД) не сделано.
 - cAdvisor отвечал 403: не хватало прав на `nodes/proxy`, добавлены ClusterRole и Binding.
 - HPA после рестартов кратко поднимается до 2 реплик и возвращается к 1.
+- Loki падал с `mkdir /var/loki: read-only file system`: без PV чарт не монтирует каталог данных при read-only корне. Включён PV 2Gi, отключён sidecar правил.
+- Vector: Service с `spec.ports: Required value` (портов у агента нет) и `{{ }}` в labels воспринимались как шаблон Helm. Исправлено `service.enabled: false` и экранированием в `monitoring/vector-values.yaml`.
+- Kafka объявляет себя коротким именем `kafka`, из namespace `monitoring` оно не резолвится (`lookup kafka ... server misbehaving`), scrape экспортёра падал по таймауту. Экспортёр перенесён в `finance-manager`.
 
 ### Ограничения
 
@@ -334,59 +393,3 @@ Traefik (`make k-traefik`, values в `k8s/traefik-values.yaml`) перенапр
 - Контрольная сумма `zabbix-release` зафиксирована при первой загрузке, независимо подтвердить её нечем.
 - Метрики CPU и памяти агента отражают ядро WSL, а не лимит контейнера в 256 МБ.
 - Только пассивные проверки, без TLS и PSK между сервером и агентом, оповещения не настроены.
-
-## Архитектура
-
-```mermaid
-flowchart LR
-  user["Браузер"]
-  subgraph kind["kind: кластер platform-lab (1 нода)"]
-    subgraph tr["ns traefik"]
-      traefik["Traefik v3.7<br/>TLS, redirect HTTP→HTTPS"]
-    end
-    subgraph cm["ns cert-manager"]
-      certm["cert-manager<br/>самоподписанный CA"]
-    end
-    subgraph fm["ns finance-manager"]
-      frontend["frontend :8080"]
-      gateway["api-gateway :8090<br/>NodePort 30090"]
-      app["finance-manager-app :8080"]
-      eureka["discovery-server :8761<br/>Eureka"]
-      pg[("Postgres<br/>StatefulSet")]
-      redis[("Redis<br/>PVC, AOF")]
-      kafka["Kafka<br/>1 брокер, RF 1"]
-      rabbit["RabbitMQ"]
-      bkp["CronJob pg-backup<br/>каждые 6 ч + verify"]
-      kexp["kafka-exporter"]
-    end
-    subgraph mon["ns monitoring"]
-      vm["VictoriaMetrics"]
-      vmalert["vmalert + Alertmanager"]
-      grafana["Grafana"]
-    end
-  end
-  ci["GitLab CI<br/>runner на хосте"]
-
-  user -->|"HTTPS, port-forward 8443"| traefik
-  traefik -->|"/"| frontend
-  traefik -->|"/api"| gateway
-  frontend -->|"HTTP, NodePort 30090"| gateway
-  gateway -.->|"через Eureka, маршруты не проверялись"| app
-  gateway --> eureka
-  app --> eureka
-  app --> pg
-  app -.->|"настроено, использование не проверялось"| redis
-  app -.->|"настроено, использование не проверялось"| kafka
-  app -.->|"креды в Deployment, использование не проверялось"| rabbit
-  bkp --> pg
-  certm -.->|"выпускает сертификат fm.localhost"| traefik
-  kexp --> kafka
-  vm -->|"scrape"| app
-  vm -->|"scrape"| kexp
-  vm -->|"scrape cAdvisor"| kind
-  vmalert --> vm
-  grafana --> vm
-  ci -.->|"helm upgrade, образы в kind"| kind
-```
-
-Что подтверждено на кластере: маршруты Ingress (`/` в frontend, `/api` в gateway), регистрация gateway и app в Eureka, креды Postgres в app, сервисы и порты. Пунктиром отмечено то, что настроено (общий ConfigMap `fm-config` подключён ко всем четырём сервисам), но фактическое использование не проверялось: Redis, Kafka и RabbitMQ со стороны приложения, маршрутизация gateway на app. На схеме нет Loki и Vector (развёрнуты в W5, сейчас отключены для экономии памяти) и compose-варианта запуска. notification-service, camunda-service и python-observer в кластере не развёрнуты.
