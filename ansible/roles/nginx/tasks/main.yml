@@ -1,0 +1,45 @@
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Remove default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Create cache directory
+  ansible.builtin.file:
+    path: /var/cache/nginx/lab
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+
+- name: Configure reverse proxy with cache
+  ansible.builtin.template:
+    src: proxy.conf.j2
+    dest: /etc/nginx/conf.d/lab-proxy.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Validate nginx config
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  check_mode: false
+
+- name: Check whether nginx is running
+  ansible.builtin.command: pgrep -x nginx
+  register: nginx_running
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Start nginx (container has no init system)
+  ansible.builtin.command: nginx
+  when: nginx_running.rc != 0
