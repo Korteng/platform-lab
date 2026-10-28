@@ -334,7 +334,7 @@ CronJob `pg-backup` в чарте `infra` (`charts/infra/templates/postgres-back
 
 ### Postmortems
 
-Разборы сбоев, которые случились по дороге, лежат в [docs/postmortems/](docs/postmortems/README.md): шторм рестартов из-за проб, падение деплоя по таймауту, DNS Kafka между namespace. Там же список мелких инцидентов и находка про readiness probe.
+Разборы сбоев, которые случились по дороге, лежат в [docs/postmortems/](docs/postmortems/README.md): шторм рестартов из-за проб, падение деплоя по таймауту, DNS Kafka между namespace, падение планового бэкапа Postgres на холодном старте. Там же список мелких инцидентов и находка про readiness probe.
 
 ### TLS
 
